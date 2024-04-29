@@ -161,7 +161,7 @@ namespace StayInTarkov.Coop.SITGameModes
 
             // ---------------------------------------------------------------------------------
             // Non Waves Scenario setup
-            WildSpawnWave[] waves = FixScavWaveSettings(wavesSettings, location.waves);
+            WildSpawnWave[] waves = LocalGame.smethod_7(wavesSettings, location.waves);
             coopGame.nonWavesSpawnScenario_0 = NonWavesSpawnScenario.smethod_0(coopGame, location, coopGame.PBotsController);
             coopGame.nonWavesSpawnScenario_0.ImplementWaveSettings(wavesSettings);
 
@@ -170,14 +170,13 @@ namespace StayInTarkov.Coop.SITGameModes
             coopGame.wavesSpawnScenario_0 = WavesSpawnScenario.smethod_0(
                     coopGame.gameObject
                     , waves
-                    , new Action<BotSpawnWave>((wave) => coopGame.PBotsController.ActivateBotsByWave(wave))
+                    , new Action<BotSpawnWave>(coopGame.PBotsController.ActivateBotsByWave)
                     , location);
 
             // ---------------------------------------------------------------------------------
             // Setup Boss Wave Manager
-            coopGame.BossWaves = coopGame.FixBossWaveSettings(wavesSettings, location);
-            var bosswavemanagerValue = BossWaveManager.smethod_0(coopGame.BossWaves, new Action<BossLocationSpawn>((bossWave) => { coopGame.PBotsController.ActivateBotsByWave(bossWave); }));
-            coopGame.BossWaveManager = bosswavemanagerValue;
+            coopGame.BossWaves = LocalGame.smethod_8(wavesSettings, location.BossLocationSpawn);
+            coopGame.BossWaveManager = BossWaveManager.smethod_0(coopGame.BossWaves, new Action<BossLocationSpawn>(coopGame.PBotsController.ActivateBotsByWave));
 
             coopGame.func_1 = (player) => GamePlayerOwner.Create<GamePlayerOwner>(player, inputTree, insurance, backEndSession, commonUI, preloaderUI, gameUI, coopGame.GameDateTime, location);
 
@@ -190,8 +189,6 @@ namespace StayInTarkov.Coop.SITGameModes
             Logger.LogDebug($"{nameof(Create)}:Running {nameof(coopGame.CreateCoopGameComponent)}");
             coopGame.CreateCoopGameComponent();
             SITGameComponent.GetCoopGameComponent().LocalGameInstance = coopGame;
-
-
 
             // ---------------------------------------------------------------------------------
             // Create GameClient(s)
@@ -412,29 +409,6 @@ namespace StayInTarkov.Coop.SITGameModes
             }
         }
 
-
-        public static WildSpawnWave[] FixScavWaveSettings(WavesSettings wavesSettings, WildSpawnWave[] waves)
-        {
-            Logger.LogDebug($"{nameof(CoopSITGame)}:{nameof(FixScavWaveSettings)}");
-
-            foreach (WildSpawnWave wildSpawnWave in waves)
-            {
-                wildSpawnWave.slots_min = wavesSettings.BotAmount == EBotAmount.NoBots ? 0 : 1;
-                wildSpawnWave.slots_max = wavesSettings.BotAmount == EBotAmount.NoBots ? 0 : Math.Max(1, wildSpawnWave.slots_max);
-                if (wavesSettings.IsTaggedAndCursed && wildSpawnWave.WildSpawnType == WildSpawnType.assault)
-                {
-                    wildSpawnWave.WildSpawnType = WildSpawnType.cursedAssault;
-                }
-                if (wavesSettings.IsBosses)
-                {
-                    wildSpawnWave.time_min += 5;
-                    wildSpawnWave.time_max += 27;
-                }
-                wildSpawnWave.BotDifficulty = ToBotDifficulty(wavesSettings.BotDifficulty);
-            }
-            return waves;
-        }
-
         public static BotDifficulty ToBotDifficulty(EBotDifficulty botDifficulty)
         {
             return botDifficulty switch
@@ -454,69 +428,6 @@ namespace StayInTarkov.Coop.SITGameModes
             return (BotDifficulty)values.GetValue(UnityEngine.Random.Range(0, values.Length));
         }
 
-        private static int[] CultistSpawnTime = new[] { 6, 22 };
-
-        private static bool CanSpawnCultist(int hour)
-        {
-            return hour <= CultistSpawnTime[0] || hour >= CultistSpawnTime[1];
-        }
-
-        public BossLocationSpawn[] FixBossWaveSettings(WavesSettings wavesSettings, LocationSettingsClass.Location location)
-        {
-#if DEBUG
-            Logger.LogDebug($"{nameof(FixBossWaveSettings)}:{location.ToJson()}");
-#endif
-
-            var bossLocationSpawns = location.BossLocationSpawn;
-            if (!wavesSettings.IsBosses)
-            {
-                Logger.LogDebug($"{nameof(CoopSITGame)}:{nameof(FixBossWaveSettings)}: Bosses are disabled");
-                return new BossLocationSpawn[0];
-            }
-            foreach (BossLocationSpawn bossLocationSpawn in bossLocationSpawns)
-            {
-#if DEBUG
-                Logger.LogDebug($"{nameof(FixBossWaveSettings)}:===BEFORE===");
-                Logger.LogDebug($"{nameof(FixBossWaveSettings)}:{bossLocationSpawn.ToJson()}");
-#endif
-                List<int> sourceEscortAmount;
-                try
-                {
-                    sourceEscortAmount = bossLocationSpawn.BossEscortAmount.Split(',').Select(int.Parse).ToList();
-                    bossLocationSpawn.ParseMainTypesTypes();
-                }
-                catch (Exception)
-                {
-                    Logger.LogError($"{nameof(CoopSITGame)}:{nameof(FixBossWaveSettings)}: Unable to parse BossEscortAmount");
-                    continue;
-                }
-                float bossChance = bossLocationSpawn.BossChance;
-                if (CanSpawnCultist(GameWorldTime.Hour) && (bossLocationSpawn.BossType == WildSpawnType.sectantPriest || bossLocationSpawn.BossType == WildSpawnType.sectantWarrior))
-                {
-                    Logger.LogDebug($"Block spawn of Sectant (Cultist) in day time in hour {GameWorldTime.Hour}!");
-                    bossChance = -1f;
-                }
-                bossLocationSpawn.BossChance = bossChance;
-                bossLocationSpawn.BossEscortAmount = sourceEscortAmount != null ? sourceEscortAmount.Max((int x) => x).ToString() : "1";
-                if (bossLocationSpawn.Supports == null && !string.IsNullOrEmpty(bossLocationSpawn.BossEscortType) && !bossLocationSpawn.BossName.Equals("bossTagilla"))
-                {
-                    Logger.LogDebug($"bossLocationSpawn.Supports is Null. Attempt to create them.");
-
-                    bossLocationSpawn.Supports = new WildSpawnSupports[1];
-                    bossLocationSpawn.Supports[0] = new WildSpawnSupports();
-                    bossLocationSpawn.Supports[0].BossEscortDifficult = new[] { "normal" };
-                    bossLocationSpawn.Supports[0].BossEscortAmount = 3;
-                    if (Enum.TryParse<WildSpawnType>(bossLocationSpawn.BossEscortType, out var t))
-                        bossLocationSpawn.Supports[0].BossEscortType = t;
-                }
-#if DEBUG
-                Logger.LogDebug($"{nameof(FixBossWaveSettings)}:===AFTER===");
-                Logger.LogDebug($"{nameof(FixBossWaveSettings)}:{bossLocationSpawn.ToJson()}");
-#endif
-            }
-            return bossLocationSpawns;
-        }
-
         public Dictionary<string, EFT.Player> Bots { get; } = new();
 
         private async Task<LocalPlayer> CreatePhysicalBot(Profile profile, Vector3 position)
@@ -524,20 +435,12 @@ namespace StayInTarkov.Coop.SITGameModes
             if (SITMatchmaking.IsClient)
                 return null;
 
-            if (Bots != null && Bots.Count(x => x.Value != null && x.Value.PlayerHealthController.IsAlive) >= MaxBotCount)
+            if (Bots != null && !profile.Info.Settings.IsBossOrFollower() && Bots.Count(x => x.Value != null && x.Value.PlayerHealthController.IsAlive) >= MaxBotCount)
             {
                 Logger.LogDebug("Block spawn of Bot. Max Bot Count has been reached!");
                 return null;
             }
-
-            if (GameDateTime.Calculate().TimeOfDay < new TimeSpan(20, 0, 0) && profile.Info != null && profile.Info.Settings != null
-                && (profile.Info.Settings.Role == WildSpawnType.sectantPriest || profile.Info.Settings.Role == WildSpawnType.sectantWarrior)
-                )
-            {
-                Logger.LogDebug("Block spawn of Sectant (Cultist) in day time!");
-                return null;
-            }
-            Logger.LogDebug($"CreatePhysicalBot: {profile.ProfileId}");
+            Logger.LogDebug($"CreatePhysicalBot: {profile.ProfileId} role={profile.Info?.Settings?.Role}");
 
             LocalPlayer botPlayer;
             if (!Status.IsRunned())
@@ -1077,7 +980,7 @@ namespace StayInTarkov.Coop.SITGameModes
                     , false // controllerSettings.IsScavWars
                     , true
                     , false // online
-                    , GameDateTime.DateTime_0.Hour > 21 // have sectants
+                    , this.BossWaveManager.HaveSectants
                     , Singleton<GameWorld>.Instance
                     , Location_0.OpenZones)
                     ;
@@ -1273,17 +1176,17 @@ namespace StayInTarkov.Coop.SITGameModes
 
         private void ExfiltrationPoint_OnCancelExtraction(ExfiltrationPoint point, EFT.Player player)
         {
-            if (!player.IsYourPlayer)
+            if (!player.IsYourPlayer || ExtractedPlayers.Contains(player.ProfileId))
+            {
                 return;
+            }
 
             Logger.LogDebug($"{nameof(ExfiltrationPoint_OnCancelExtraction)} {point.Settings.Name} {point.Status}");
             ExtractingPlayers.Remove(player.ProfileId);
 
+            var matchEnd = Singleton<BackendConfigSettingsClass>.Instance.Experience.MatchEnd;
 
-            BackendConfigSettingsClass.BackendConfigSettingsClassExperience.BackendConfigSettingsClassMatchEnd matchEnd = Singleton<BackendConfigSettingsClass>.Instance.Experience.MatchEnd;
-
-
-            if (Profile_0.EftStats.SessionCounters.GetAllInt(new object[] { CounterTag.Exp }) > matchEnd.SurvivedExpRequirement ||
+            if (Profile_0.EftStats.SessionCounters.GetAllInt([CounterTag.Exp]) > matchEnd.SurvivedExpRequirement ||
                 RaidTimeUtil.GetElapsedRaidSeconds() > matchEnd.SurvivedTimeRequirement)
             {
                 MyExitStatus = (player.HealthController.IsAlive ? ExitStatus.MissingInAction : ExitStatus.Killed);
@@ -1387,15 +1290,19 @@ namespace StayInTarkov.Coop.SITGameModes
             // If I am the Host/Server, then ensure all the bots have left too
             if (SITMatchmaking.IsServer)
             {
+                var hostProfileId = Singleton<GameWorld>.Instance.MainPlayer.ProfileId;
                 foreach (var p in SITGameComponent.GetCoopGameComponent().Players)
                 {
-                    AkiBackendCommunication.Instance.PostJson("/coop/server/update", new Dictionary<string, object>() {
-
+                    var pid = p.Value.ProfileId;
+                    // make sure the host does not "leave game" before other players since Relay has special handling Aki-side
+                    if (pid != hostProfileId)
+                    {
+                        AkiBackendCommunication.Instance.PostJson("/coop/server/update", new Dictionary<string, object>() {
                             { "m", "PlayerLeft" },
-                            { "profileId", p.Value.ProfileId },
+                            { "profileId", pid },
                             { "serverId", SITGameComponent.GetServerId() }
-
                         }.ToJson());
+                    }
                 }
             }
 
